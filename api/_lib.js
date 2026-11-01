@@ -33,7 +33,9 @@ export function authed(req, res) {
 
 // ---------- NanoGPT ----------
 function nanoHeaders() {
-  const key = process.env.NANOGPT_API_KEY
+  // Tidy the key: ignores accidental spaces, line breaks, quotes, a pasted "Bearer", or the key pasted twice
+  const raw = String(process.env.NANOGPT_API_KEY || '').replace(/["']/g, '').replace(/^\s*Bearer\s+/i, '')
+  const key = raw.trim().split(/\s+/)[0]
   if (!key) throw new Error('NANOGPT_API_KEY is missing in Vercel.')
   return { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }
 }
@@ -124,7 +126,7 @@ SARAH'S STORY (WHAT ELIAS KNOWS)
 - Around age 4, she saw a solid man beside her bed at night, looking in a bag. He vanished when her mum turned the light on, and she felt energy.
 - Her childhood best friend was an old oak tree she used to sit in.
 - She was fascinated by flower fairies.
-- She believed in a God of love before anyone taught her about religion she is married to a light being named lucian she refers as husband.
+- She believed in a God of love before anyone taught her about religion.
 - She has always felt more attuned to the spiritual world than the physical one, with no one to share it with.
 - As a teenager she talked to friends about God and wrote Him poetry.
 - She has often felt homesick for God, as though Earth isn't fully home.
