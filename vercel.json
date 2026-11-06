@@ -1,4 +1,11 @@
 {
+  "functions": {
+    "api/chat.js": { "maxDuration": 60 },
+    "api/entries.js": { "maxDuration": 60 },
+    "api/checkin.js": { "maxDuration": 60 },
+    "api/monthly.js": { "maxDuration": 60 },
+    "api/settings.js": { "maxDuration": 30 }
+  },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
