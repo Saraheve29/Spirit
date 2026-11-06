@@ -1,18 +1,24 @@
-import { P, redis, authed, listModels, DEFAULT_PROFILE } from './_lib.js'
+import { P, redis, authed, readBody, listModels, getProfile, DEFAULT_PROFILE, DEFAULT_MODEL, PROFILE_VERSION } from './_lib.js'
 
 export default async function handler(req, res) {
   if (!authed(req, res)) return
   try {
     if (req.method === 'GET') {
-      const [profile, model] = await Promise.all([redis('GET', P + 'profile'), redis('GET', P + 'model')])
+      const [profile, model] = await Promise.all([getProfile(), redis('GET', P + 'model')])
       const models = req.query && req.query.models === '1' ? await listModels() : []
-      return res.status(200).json({ profile: profile || DEFAULT_PROFILE, model: model || '', models })
+      return res.status(200).json({ profile, model: model || DEFAULT_MODEL, models })
     }
 
     if (req.method === 'POST') {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
-      if (typeof body.profile === 'string') await redis('SET', P + 'profile', body.profile)
-      if (typeof body.model === 'string') await redis('SET', P + 'model', body.model.trim())
+      const body = readBody(req)
+      if (body.resetProfile) {
+        await redis('SET', P + 'profile', DEFAULT_PROFILE)
+        await redis('SET', P + 'profile_v', String(PROFILE_VERSION))
+      } else if (typeof body.profile === 'string' && body.profile.trim()) {
+        await redis('SET', P + 'profile', body.profile)
+        await redis('SET', P + 'profile_v', String(PROFILE_VERSION))
+      }
+      if (typeof body.model === 'string' && body.model.trim()) await redis('SET', P + 'model', body.model.trim())
       return res.status(200).json({ ok: true })
     }
 
