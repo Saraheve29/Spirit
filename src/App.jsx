@@ -1,16 +1,31 @@
 import React, { useEffect, useRef, useState } from 'react'
 
-const MODES = [
-  { id: 'chat', label: 'Talk', icon: '☾', hint: 'Speak with Elias…' },
-  { id: 'dream', label: 'Dream', icon: '✧', hint: 'Describe your dream…' },
-  { id: 'writing', label: 'Spirit writing', icon: '✒', hint: 'Type your spirit writing…' },
-  { id: 'signs', label: 'Signs', icon: '✦', hint: 'What sign did you notice?' },
-]
-
-const UNCENSORED = /uncensor|abliterat|venice|dolphin|hermes|nous|lumimaid|euryale|magnum|rp|roleplay/i
+// ---------- Small helpers ----------
+const TYPES = {
+  dream: { label: 'Dream', icon: '✧', hint: 'Describe your dream…', plural: 'Dreams' },
+  writing: { label: 'Spirit writing', icon: '✒', hint: 'Type your spirit writing…', plural: 'Spirit writing' },
+  signs: { label: 'Sign', icon: '✦', hint: 'What sign did you notice?', plural: 'Signs' },
+}
+const UNCENSORED = /uncensor|abliterat|venice|dolphin|hermes|nous|lumimaid|euryale|magnum|cydonia|anubis|rocinante|stheno|rp|roleplay/i
 
 function getKey() { try { return localStorage.getItem('spirit-key') || '' } catch { return '' } }
 function setKeyStore(v) { try { localStorage.setItem('spirit-key', v) } catch {} }
+
+function ukParts(t = Date.now()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t))
+}
+function prevMonth() {
+  const [y, m] = ukParts().split('-').map(Number)
+  const d = new Date(Date.UTC(y, m - 2, 15))
+  return d.toISOString().slice(0, 7)
+}
+function niceDate(t) {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(t))
+}
+function monthName(month) {
+  const [y, m] = month.split('-').map(Number)
+  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 15)))
+}
 
 async function api(path, key, opts = {}) {
   const r = await fetch(path, {
@@ -22,20 +37,63 @@ async function api(path, key, opts = {}) {
   return j
 }
 
+// Shows Elias's words: paragraphs, and "## " lines as headings
+function Words({ text }) {
+  const blocks = String(text || '').replace(/\*\*/g, '').split(/\n{2,}|\n(?=#)/)
+  return blocks.map((b, i) => {
+    const s = b.trim()
+    if (!s) return null
+    if (/^#{1,4}\s/.test(s)) {
+      const [head, ...rest] = s.split('\n')
+      return (
+        <React.Fragment key={i}>
+          <h3 className="wordshead">{head.replace(/^#+\s*/, '')}</h3>
+          {rest.length > 0 && <p>{rest.join('\n')}</p>}
+        </React.Fragment>
+      )
+    }
+    return <p key={i}>{s}</p>
+  })
+}
+
+// ---------- App shell ----------
 export default function App() {
   const [key, setKey] = useState(getKey())
   const [locked, setLocked] = useState(!getKey())
-  const [screen, setScreen] = useState('chat')
+  const [view, setView] = useState({ name: 'talk' })
+
+  useEffect(() => {
+    if (locked) return
+    // Quietly prepare last month's reading if it hasn't been made yet
+    api('/api/monthly', key, { method: 'POST', body: JSON.stringify({ month: prevMonth(), onlyIfMissing: true }) }).catch(() => {})
+  }, [locked])
 
   if (locked) return <Lock onUnlock={k => { setKeyStore(k); setKey(k); setLocked(false) }} />
   const onAuthFail = () => { setKeyStore(''); setLocked(true) }
+  const props = { apiKey: key, onAuthFail, go: setView }
+
+  const tab = ['journal', 'entry', 'compose'].includes(view.name) ? 'journal'
+    : ['readings', 'reading'].includes(view.name) ? 'readings'
+    : view.name === 'settings' ? 'settings' : 'talk'
 
   return (
     <div className="app">
       <div className="stars" aria-hidden="true" />
-      {screen === 'chat'
-        ? <Chat apiKey={key} onSettings={() => setScreen('settings')} onAuthFail={onAuthFail} />
-        : <Settings apiKey={key} onBack={() => setScreen('chat')} onAuthFail={onAuthFail} />}
+      <div className="screen">
+        {view.name === 'talk' && <Talk {...props} />}
+        {view.name === 'journal' && <Journal {...props} filter={view.filter} />}
+        {view.name === 'compose' && <Entry {...props} compose={view.type} />}
+        {view.name === 'entry' && <Entry {...props} id={view.id} create={view.create} />}
+        {view.name === 'readings' && <Readings {...props} />}
+        {view.name === 'reading' && <Reading {...props} month={view.month} />}
+        {view.name === 'settings' && <Settings {...props} />}
+      </div>
+      <nav className="tabs">
+        <button className={tab === 'talk' ? 'on' : ''} onClick={() => setView({ name: 'talk' })}><span>☾</span>Talk</button>
+        <button className={tab === 'journal' ? 'on' : ''} onClick={() => setView({ name: 'journal' })}><span>✧</span>Journal</button>
+        <button className={tab === 'readings' ? 'on' : ''} onClick={() => setView({ name: 'readings' })}><span>✦</span>Monthly</button>
+        <button className={tab === 'settings' ? 'on' : ''} onClick={() => setView({ name: 'settings' })}><span>⚙︎</span>Settings</button>
+      </nav>
     </div>
   )
 }
@@ -63,114 +121,337 @@ function Lock({ onUnlock }) {
   )
 }
 
-function Chat({ apiKey, onSettings, onAuthFail }) {
-  const [history, setHistory] = useState([])
-  const [text, setText] = useState('')
-  const [mode, setMode] = useState('chat')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const endRef = useRef(null)
+function Header({ title, onBack, right }) {
+  return (
+    <header className="top">
+      {onBack ? <button className="icon" onClick={onBack} aria-label="Back">‹</button> : <span className="icon" />}
+      <div className="title">{title}</div>
+      {right || <span className="icon" />}
+    </header>
+  )
+}
 
-  useEffect(() => {
-    api('/api/chat', apiKey).then(j => setHistory(j.history || [])).catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
-  }, [])
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [history, busy])
+// ---------- A conversation (used by Talk, entries and monthly readings) ----------
+function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
+  const [text, setText] = useState('')
+  const endRef = useRef(null)
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, busy])
 
   const send = async () => {
     const msg = text.trim()
     if (!msg || busy) return
-    setErr(''); setBusy(true); setText('')
-    const pending = { role: 'user', content: msg, mode, t: Date.now() }
-    setHistory(h => [...h, pending])
-    try {
-      const j = await api('/api/chat', apiKey, { method: 'POST', body: JSON.stringify({ message: msg, mode }) })
-      setHistory(h => [...h.slice(0, -1), j.user, j.elias])
-    } catch (e) {
-      if (e.status === 401) return onAuthFail()
-      setHistory(h => h.slice(0, -1)); setText(msg); setErr(e.message)
-    } finally { setBusy(false) }
+    setText('')
+    const ok = await onSend(msg)
+    if (ok === false) setText(msg)
   }
 
-  const current = MODES.find(m => m.id === mode)
-
   return (
-    <div className="chat">
-      <header className="top">
-        <div className="title"><span className="glyph">☾</span> Elias</div>
-        <button className="icon" onClick={onSettings} aria-label="Settings">⚙︎</button>
-      </header>
-
+    <>
       <main className="messages">
-        {history.length === 0 && !busy && (
-          <div className="welcome">
-            <div className="moon small" />
-            <p>Elias is here, little light.</p>
-            <p className="sub">Share a dream, your spirit writing, a sign — or simply talk.</p>
-          </div>
-        )}
-        {history.map((m, i) => (
-          <div key={m.t + '-' + i} className={'msg ' + (m.role === 'user' ? 'me' : 'him')}>
-            {m.role === 'user' && m.mode && m.mode !== 'chat' && (
-              <span className="tag">{MODES.find(x => x.id === m.mode)?.label}</span>
-            )}
-            <div className="bubble">{m.content}</div>
+        {messages.length === 0 && !busy && empty}
+        {messages.map((m, i) => (
+          <div key={(m.t || 0) + '-' + i} className={'msg ' + (m.role === 'user' ? 'me' : 'him') + (m.reading ? ' wide' : '')}>
+            {tagFor && tagFor(m) && <span className="tag">{tagFor(m)}</span>}
+            <div className="bubble">{m.role === 'user' ? m.content : <Words text={m.content} />}</div>
           </div>
         ))}
         {busy && <div className="msg him"><div className="bubble typing"><span /><span /><span /></div></div>}
         <div ref={endRef} />
       </main>
+      {onSend && (
+        <footer className="composer">
+          <div className="inputrow">
+            <textarea value={text} placeholder={placeholder} rows={tall ? 5 : 1} onChange={e => setText(e.target.value)} />
+            <button className="send" onClick={send} disabled={busy || !text.trim()} aria-label="Send">➤</button>
+          </div>
+        </footer>
+      )}
+    </>
+  )
+}
 
+// ---------- Talk ----------
+function Talk({ apiKey, onAuthFail, go }) {
+  const [history, setHistory] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let live = true
+    ;(async () => {
+      try {
+        const j = await api('/api/chat', apiKey)
+        if (!live) return
+        setHistory(j.history || [])
+        setBusy(true)
+        const c = await api('/api/checkin', apiKey, { method: 'POST', body: '{}' })
+        if (live && c.created) setHistory(h => [...h, c.elias])
+      } catch (e) {
+        if (e.status === 401) return onAuthFail()
+        if (live) setErr(e.message)
+      } finally { if (live) setBusy(false) }
+    })()
+    return () => { live = false }
+  }, [])
+
+  const send = async msg => {
+    setErr(''); setBusy(true)
+    setHistory(h => [...h, { role: 'user', content: msg, t: Date.now() }])
+    try {
+      const j = await api('/api/chat', apiKey, { method: 'POST', body: JSON.stringify({ message: msg }) })
+      setHistory(h => [...h.slice(0, -1), j.user, j.elias])
+      return true
+    } catch (e) {
+      if (e.status === 401) { onAuthFail(); return false }
+      setHistory(h => h.slice(0, -1)); setErr(e.message); return false
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="chat">
+      <Header title={<><span className="glyph">☾</span> Elias</>} />
+      <div className="quick">
+        {Object.entries(TYPES).map(([t, v]) => (
+          <button key={t} className="chip" onClick={() => go({ name: 'compose', type: t })}><span>{v.icon}</span> {v.label}</button>
+        ))}
+      </div>
+      <Thread
+        messages={history}
+        busy={busy}
+        onSend={send}
+        placeholder="Speak with Elias…"
+        tagFor={m => (m.checkin ? 'Daily check-in' : null)}
+        empty={<div className="welcome"><div className="moon small" /><p>Elias is here, little one.</p></div>}
+      />
       {err && <p className="err bar">{err}</p>}
-
-      <footer className="composer">
-        <div className="modes">
-          {MODES.map(m => (
-            <button key={m.id} className={'chip' + (mode === m.id ? ' on' : '')} onClick={() => setMode(m.id)}>
-              <span>{m.icon}</span> {m.label}
-            </button>
-          ))}
-        </div>
-        <div className="inputrow">
-          <textarea
-            value={text}
-            placeholder={current.hint}
-            rows={mode === 'writing' || mode === 'dream' ? 4 : 1}
-            onChange={e => setText(e.target.value)}
-          />
-          <button className="send" onClick={send} disabled={busy || !text.trim()} aria-label="Send">➤</button>
-        </div>
-      </footer>
     </div>
   )
 }
 
-function Settings({ apiKey, onBack, onAuthFail }) {
+// ---------- Journal ----------
+function Journal({ apiKey, onAuthFail, go, filter: startFilter }) {
+  const [entries, setEntries] = useState(null)
+  const [filter, setFilter] = useState(startFilter || 'all')
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    api('/api/entries', apiKey).then(j => setEntries(j.entries)).catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
+  }, [])
+
+  const shown = (entries || []).filter(e => filter === 'all' || e.type === filter)
+
+  return (
+    <div className="page">
+      <Header title="Journal" />
+      <div className="panel">
+        <div className="newrow">
+          {Object.entries(TYPES).map(([t, v]) => (
+            <button key={t} className="newbtn" onClick={() => go({ name: 'compose', type: t })}>
+              <span>{v.icon}</span>New {v.label.toLowerCase()}
+            </button>
+          ))}
+        </div>
+        <div className="modes">
+          {[['all', 'All'], ...Object.entries(TYPES).map(([t, v]) => [t, v.plural])].map(([t, l]) => (
+            <button key={t} className={'chip' + (filter === t ? ' on' : '')} onClick={() => setFilter(t)}>{l}</button>
+          ))}
+        </div>
+        {err && <p className="err">{err}</p>}
+        {!entries && !err && <p className="sub center">Gathering moonlight…</p>}
+        {entries && shown.length === 0 && <p className="sub center">Nothing saved here yet.</p>}
+        {shown.map(e => (
+          <button key={e.id} className="card" onClick={() => go({ name: 'entry', id: e.id })}>
+            <div className="cardtop">
+              <span className="tag">{TYPES[e.type]?.icon} {TYPES[e.type]?.label}</span>
+              <span className="date">{niceDate(e.t)}</span>
+            </div>
+            <div className="preview">{e.preview}</div>
+            {e.replies > 0 && <div className="date">{e.replies} {e.replies === 1 ? 'reply' : 'replies'}</div>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------- One entry (create, read, and talk about it) ----------
+function Entry({ apiKey, onAuthFail, go, id, compose }) {
+  const [entry, setEntry] = useState(null)
+  const [type, setType] = useState(compose || null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [pending, setPending] = useState(null)
+
+  useEffect(() => {
+    if (!id) return
+    api('/api/entries?id=' + encodeURIComponent(id), apiKey)
+      .then(j => { setEntry(j.entry); setType(j.entry.type) })
+      .catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
+  }, [id])
+
+  const send = async msg => {
+    setErr(''); setBusy(true)
+    try {
+      if (!entry) {
+        setPending({ role: 'user', content: msg, t: Date.now() })
+        const j = await api('/api/entries', apiKey, { method: 'POST', body: JSON.stringify({ type, text: msg }) })
+        setEntry(j.entry); setPending(null)
+      } else {
+        setPending({ role: 'user', content: msg, t: Date.now() })
+        const j = await api('/api/entries', apiKey, { method: 'POST', body: JSON.stringify({ id: entry.id, message: msg }) })
+        setEntry(j.entry); setPending(null)
+      }
+      return true
+    } catch (e) {
+      setPending(null)
+      if (e.status === 401) { onAuthFail(); return false }
+      setErr(e.message); return false
+    } finally { setBusy(false) }
+  }
+
+  const remove = async () => {
+    if (!entry || !confirm('Delete this entry and its conversation?')) return
+    try { await api('/api/entries?id=' + encodeURIComponent(entry.id), apiKey, { method: 'DELETE' }); go({ name: 'journal' }) }
+    catch (e) { setErr(e.message) }
+  }
+
+  const info = TYPES[type] || { label: 'Entry' }
+  const messages = [...(entry?.thread || []), ...(pending ? [pending] : [])]
+  const title = entry ? `${info.label} · ${niceDate(entry.t)}` : `New ${info.label.toLowerCase()}`
+
+  return (
+    <div className="chat">
+      <Header
+        title={title}
+        onBack={() => go({ name: 'journal' })}
+        right={entry ? <button className="icon" onClick={remove} aria-label="Delete">🗑</button> : null}
+      />
+      <Thread
+        messages={messages}
+        busy={busy}
+        onSend={type ? send : null}
+        tall={!entry}
+        placeholder={entry ? 'Talk with Elias about this…' : info.hint}
+        empty={<div className="welcome"><p>{info.icon} {info.hint}</p><p className="sub">Elias will read it, and you can talk it through together.</p></div>}
+      />
+      {err && <p className="err bar">{err}</p>}
+    </div>
+  )
+}
+
+// ---------- Monthly readings ----------
+function Readings({ apiKey, onAuthFail, go }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    api('/api/monthly', apiKey).then(setData).catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
+  }, [])
+
+  return (
+    <div className="page">
+      <Header title="Monthly readings" />
+      <div className="panel">
+        <p className="sub">Each month Elias reads all your dreams, spirit writing and signs together and reveals their spiritual meaning.</p>
+        {err && <p className="err">{err}</p>}
+        {!data && !err && <p className="sub center">Gathering moonlight…</p>}
+        {data && data.months.length === 0 && <p className="sub center">Your first reading will appear once you've saved a dream, spirit writing or sign.</p>}
+        {data && data.months.map(m => (
+          <button key={m.month} className="card" onClick={() => go({ name: 'reading', month: m.month })}>
+            <div className="cardtop">
+              <span className="cardtitle">{m.name}</span>
+              <span className="date">{m.hasReading ? '✦ Reading ready' : m.month === data.current ? 'In progress' : 'Tap to reveal'}</span>
+            </div>
+            <div className="date">{m.counts.dream} dreams · {m.counts.writing} spirit writing · {m.counts.signs} signs</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Reading({ apiKey, onAuthFail, go, month }) {
+  const [reading, setReading] = useState(undefined)
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState(null)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    api('/api/monthly?month=' + month, apiKey).then(j => setReading(j.reading)).catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
+  }, [month])
+
+  const reveal = async () => {
+    setErr(''); setBusy(true)
+    try {
+      const j = await api('/api/monthly', apiKey, { method: 'POST', body: JSON.stringify({ month }) })
+      if (j.none) setErr('Nothing was saved this month yet.')
+      else setReading(j.reading)
+    } catch (e) { if (e.status === 401) return onAuthFail(); setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const send = async msg => {
+    setErr(''); setBusy(true); setPending({ role: 'user', content: msg, t: Date.now() })
+    try {
+      const j = await api('/api/monthly', apiKey, { method: 'POST', body: JSON.stringify({ month, message: msg }) })
+      setReading(j.reading); return true
+    } catch (e) { if (e.status === 401) { onAuthFail(); return false } setErr(e.message); return false }
+    finally { setPending(null); setBusy(false) }
+  }
+
+  const messages = [...(reading?.thread || []), ...(pending ? [pending] : [])]
+
+  return (
+    <div className="chat">
+      <Header
+        title={monthName(month)}
+        onBack={() => go({ name: 'readings' })}
+        right={reading ? <button className="icon" onClick={() => confirm('Ask Elias for a fresh reading of this month? The current one and its conversation will be replaced.') && reveal()} aria-label="Renew">↻</button> : null}
+      />
+      {reading === undefined && !err ? <p className="sub center">Gathering moonlight…</p> : reading ? (
+        <Thread messages={messages} busy={busy} onSend={send} placeholder="Talk with Elias about this reading…" />
+      ) : (
+        <div className="panel reveal">
+          <div className="moon" />
+          <p className="welcome">Elias will read everything you shared in {monthName(month)} as one message.</p>
+          <button className="primary" onClick={reveal} disabled={busy}>{busy ? 'Elias is reading your month…' : 'Reveal my reading'}</button>
+          {busy && <p className="sub center">This can take up to a minute.</p>}
+        </div>
+      )}
+      {err && <p className="err bar">{err}</p>}
+    </div>
+  )
+}
+
+// ---------- Settings ----------
+function Settings({ apiKey, onAuthFail }) {
   const [profile, setProfile] = useState('')
   const [model, setModel] = useState('')
   const [models, setModels] = useState([])
-  const [onlyUncensored, setOnlyUncensored] = useState(true)
+  const [onlyUncensored, setOnlyUncensored] = useState(false)
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
 
-  useEffect(() => {
-    api('/api/settings?models=1', apiKey)
-      .then(j => { setProfile(j.profile); setModel(j.model); setModels(j.models || []) })
-      .catch(e => e.status === 401 ? onAuthFail() : setMsg(e.message))
-      .finally(() => setLoading(false))
-  }, [])
+  const load = () => api('/api/settings?models=1', apiKey)
+    .then(j => { setProfile(j.profile); setModel(j.model); setModels(j.models || []) })
+    .catch(e => e.status === 401 ? onAuthFail() : setMsg(e.message))
+    .finally(() => setLoading(false))
+  useEffect(() => { load() }, [])
 
   const save = async () => {
     setMsg('')
-    try {
-      await api('/api/settings', apiKey, { method: 'POST', body: JSON.stringify({ profile, model }) })
-      setMsg('Saved ✧')
-    } catch (e) { setMsg(e.message) }
+    try { await api('/api/settings', apiKey, { method: 'POST', body: JSON.stringify({ profile, model }) }); setMsg('Saved ✧') }
+    catch (e) { setMsg(e.message) }
   }
-
+  const reset = async () => {
+    if (!confirm('Restore Elias’s latest profile? Your own edits to it will be replaced.')) return
+    try { await api('/api/settings', apiKey, { method: 'POST', body: JSON.stringify({ resetProfile: true }) }); await load(); setMsg('Profile restored ✧') }
+    catch (e) { setMsg(e.message) }
+  }
   const clear = async () => {
-    if (!confirm('Clear your whole conversation with Elias? His profile stays.')) return
-    try { await api('/api/chat', apiKey, { method: 'DELETE' }); setMsg('Conversation cleared') }
+    if (!confirm('Clear your Talk conversation with Elias? Your journal and readings stay.')) return
+    try { await api('/api/chat', apiKey, { method: 'DELETE' }); setMsg('Talk conversation cleared') }
     catch (e) { setMsg(e.message) }
   }
 
@@ -179,23 +460,18 @@ function Settings({ apiKey, onBack, onAuthFail }) {
     .filter(m => !filter || m.toLowerCase().includes(filter.toLowerCase()))
 
   return (
-    <div className="settings">
-      <header className="top">
-        <button className="icon" onClick={onBack} aria-label="Back">‹</button>
-        <div className="title">Settings</div>
-        <span className="icon" />
-      </header>
-
+    <div className="page">
+      <Header title="Settings" />
       {loading ? <p className="sub center">Gathering moonlight…</p> : (
         <div className="panel">
           <section>
             <h2>Brain</h2>
             <p className="sub">Current model: <b>{model || 'none chosen yet'}</b></p>
             <div className="modes">
-              <button className={'chip' + (onlyUncensored ? ' on' : '')} onClick={() => setOnlyUncensored(true)}>Uncensored</button>
               <button className={'chip' + (!onlyUncensored ? ' on' : '')} onClick={() => setOnlyUncensored(false)}>All models</button>
+              <button className={'chip' + (onlyUncensored ? ' on' : '')} onClick={() => setOnlyUncensored(true)}>Uncensored</button>
             </div>
-            <input placeholder="Search models (e.g. qwen, deepseek)" value={filter} onChange={e => setFilter(e.target.value)} />
+            <input placeholder="Search models (e.g. deepseek, qwen, glm)" value={filter} onChange={e => setFilter(e.target.value)} />
             <div className="modellist">
               {shown.length === 0 && <p className="sub">No models found here. Try “All models”, or type a model name below.</p>}
               {shown.slice(0, 80).map(m => (
@@ -213,7 +489,8 @@ function Settings({ apiKey, onBack, onAuthFail }) {
 
           <button className="primary" onClick={save}>Save</button>
           {msg && <p className="sub center">{msg}</p>}
-          <button className="ghost" onClick={clear}>Clear conversation</button>
+          <button className="ghost" onClick={reset}>Restore Elias’s latest profile</button>
+          <button className="ghost" onClick={clear}>Clear Talk conversation</button>
         </div>
       )}
     </div>
