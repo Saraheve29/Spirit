@@ -131,15 +131,106 @@ function Header({ title, onBack, right }) {
   )
 }
 
+// ---------- Copy button (same as Light's) ----------
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    // Older phones: fall back to a hidden text box
+    try {
+      const box = document.createElement('textarea')
+      box.value = text
+      box.setAttribute('readonly', '')
+      box.style.position = 'fixed'
+      box.style.opacity = '0'
+      document.body.appendChild(box)
+      box.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(box)
+      return ok
+    } catch { return false }
+  }
+}
+
+function CopyButton({ text }) {
+  const [done, setDone] = useState('')
+  const copy = async () => {
+    const ok = await copyText(String(text || '').replace(/\*\*/g, ''))
+    setDone(ok ? 'Copied ✓' : 'Couldn’t copy')
+    setTimeout(() => setDone(''), 1500)
+  }
+  return <button type="button" className="copy-btn" onClick={copy} aria-label="Copy message">{done || 'Copy'}</button>
+}
+
+// ---------- Speak instead of typing (uses the phone's own free speech-to-text) ----------
+const SpeechRec = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)
+
+function useDictation(text, setText) {
+  const [listening, setListening] = useState(false)
+  const recRef = useRef(null)
+  const wantRef = useRef(false)
+  const baseRef = useRef('')
+  const textRef = useRef(text)
+  textRef.current = text
+
+  const stop = () => {
+    wantRef.current = false
+    setListening(false)
+    try { recRef.current?.stop() } catch {}
+  }
+
+  const startSession = () => {
+    const rec = new SpeechRec()
+    rec.lang = 'en-GB'
+    rec.continuous = true
+    rec.interimResults = true
+    baseRef.current = textRef.current
+    rec.onresult = e => {
+      let said = ''
+      for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript
+      said = said.trim()
+      const base = baseRef.current.trim()
+      setText(base && said ? base + ' ' + said : base || said)
+    }
+    rec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        wantRef.current = false
+        setTimeout(() => window.alert('Spirit needs permission to use your microphone. Tap the icon next to the web address, allow the microphone, then try again.'), 0)
+      }
+    }
+    // Phones stop listening after a pause, so keep going until you tap stop
+    rec.onend = () => {
+      if (wantRef.current) { try { startSession() } catch { stop() } }
+      else setListening(false)
+    }
+    recRef.current = rec
+    rec.start()
+  }
+
+  const start = () => {
+    if (!SpeechRec) return
+    wantRef.current = true
+    setListening(true)
+    try { startSession() } catch { stop() }
+  }
+
+  useEffect(() => () => { wantRef.current = false; try { recRef.current?.abort() } catch {} }, [])
+
+  return { supported: !!SpeechRec, listening, stop, toggle: () => (wantRef.current ? stop() : start()) }
+}
+
 // ---------- A conversation (used by Talk, entries and monthly readings) ----------
 function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
   const [text, setText] = useState('')
   const endRef = useRef(null)
+  const mic = useDictation(text, setText)
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, busy])
 
   const send = async () => {
     const msg = text.trim()
     if (!msg || busy) return
+    mic.stop()
     setText('')
     const ok = await onSend(msg)
     if (ok === false) setText(msg)
@@ -153,6 +244,7 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
           <div key={(m.t || 0) + '-' + i} className={'msg ' + (m.role === 'user' ? 'me' : 'him') + (m.reading ? ' wide' : '')}>
             {tagFor && tagFor(m) && <span className="tag">{tagFor(m)}</span>}
             <div className="bubble">{m.role === 'user' ? m.content : <Words text={m.content} />}</div>
+            <CopyButton text={m.content} />
           </div>
         ))}
         {busy && <div className="msg him"><div className="bubble typing"><span /><span /><span /></div></div>}
@@ -160,8 +252,14 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
       </main>
       {onSend && (
         <footer className="composer">
+          {mic.listening && <p className="listening">Listening… speak freely, then tap ■ to stop</p>}
           <div className="inputrow">
             <textarea value={text} placeholder={placeholder} rows={tall ? 5 : 1} onChange={e => setText(e.target.value)} />
+            {mic.supported && (
+              <button className={'mic' + (mic.listening ? ' on' : '')} onClick={mic.toggle} aria-label={mic.listening ? 'Stop listening' : 'Speak'}>
+                {mic.listening ? '■' : '🎙'}
+              </button>
+            )}
             <button className="send" onClick={send} disabled={busy || !text.trim()} aria-label="Send">➤</button>
           </div>
         </footer>
