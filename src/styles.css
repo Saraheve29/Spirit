@@ -154,6 +154,20 @@ input:focus, textarea:focus { border-color: var(--mist); box-shadow: 0 0 0 3px v
 .date { font-size: 12px; color: var(--mist); }
 .preview { font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
 
+.mic {
+  flex: none; width: 46px; height: 46px; border-radius: 50%;
+  border: 1px solid rgba(220, 220, 236, 0.25); background: rgba(107, 79, 168, 0.25);
+  font-size: 19px; color: var(--silver);
+}
+.mic.on { background: #8a3b6b; border-color: #e7a6cf; font-size: 16px; animation: micglow 1.4s ease-in-out infinite; }
+@keyframes micglow { 0%, 100% { box-shadow: 0 0 0 0 rgba(231, 166, 207, 0.5); } 50% { box-shadow: 0 0 0 10px rgba(231, 166, 207, 0); } }
+.listening { margin: 0 0 8px; font-size: 13px; color: #e7a6cf; text-align: center; }
+
+.copy-btn { background: none; border: none; font-size: 12px; color: rgba(220, 220, 236, 0.5); padding: 4px 2px 0; }
+.copy-btn:active { color: var(--silver); }
+.him .copy-btn { align-self: flex-start; padding-left: 8px; }
+.me .copy-btn { align-self: flex-end; padding-right: 8px; }
+
 .modellist { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .model { text-align: left; padding: 10px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid transparent; font-size: 14px; word-break: break-all; }
 .model.on { border-color: var(--violet); background: rgba(107, 79, 168, 0.3); }
