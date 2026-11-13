@@ -172,3 +172,14 @@ input:focus, textarea:focus { border-color: var(--mist); box-shadow: 0 0 0 3px v
 .model { text-align: left; padding: 10px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid transparent; font-size: 14px; word-break: break-all; }
 .model.on { border-color: var(--violet); background: rgba(107, 79, 168, 0.3); }
 .profile { min-height: 320px; font-size: 14px; line-height: 1.5; }
+
+/* Evidence Box */
+.savednote { font-size: 12px; color: #e7c9f2; margin-top: 6px; padding-left: 8px; }
+.evform { gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--mist); }
+.evwhat { white-space: pre-wrap; font-family: 'Cormorant Garamond', serif; font-size: 18px; line-height: 1.45; }
+.rowactions { display: flex; gap: 18px; }
+.rowactions .copy-btn { padding-left: 0; }
+.speakbtn { align-self: flex-start; padding: 8px 14px; border-radius: 999px; font-size: 13px; border: 1px solid rgba(220, 220, 236, 0.25); background: rgba(107, 79, 168, 0.25); color: var(--silver); }
+.speakbtn.on { background: #8a3b6b; border-color: #e7a6cf; animation: micglow 1.4s ease-in-out infinite; }
+.tabs button { font-size: 11px; }
