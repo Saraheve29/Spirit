@@ -74,6 +74,7 @@ export default function App() {
 
   const tab = ['journal', 'entry', 'compose'].includes(view.name) ? 'journal'
     : ['readings', 'reading'].includes(view.name) ? 'readings'
+    : view.name === 'evidence' ? 'evidence'
     : view.name === 'settings' ? 'settings' : 'talk'
 
   return (
@@ -86,12 +87,14 @@ export default function App() {
         {view.name === 'entry' && <Entry {...props} id={view.id} create={view.create} />}
         {view.name === 'readings' && <Readings {...props} />}
         {view.name === 'reading' && <Reading {...props} month={view.month} />}
+        {view.name === 'evidence' && <Evidence {...props} />}
         {view.name === 'settings' && <Settings {...props} />}
       </div>
       <nav className="tabs">
         <button className={tab === 'talk' ? 'on' : ''} onClick={() => setView({ name: 'talk' })}><span>☾</span>Talk</button>
         <button className={tab === 'journal' ? 'on' : ''} onClick={() => setView({ name: 'journal' })}><span>✧</span>Journal</button>
         <button className={tab === 'readings' ? 'on' : ''} onClick={() => setView({ name: 'readings' })}><span>✦</span>Monthly</button>
+        <button className={tab === 'evidence' ? 'on' : ''} onClick={() => setView({ name: 'evidence' })}><span>❂</span>Evidence</button>
         <button className={tab === 'settings' ? 'on' : ''} onClick={() => setView({ name: 'settings' })}><span>⚙︎</span>Settings</button>
       </nav>
     </div>
@@ -244,6 +247,9 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
           <div key={(m.t || 0) + '-' + i} className={'msg ' + (m.role === 'user' ? 'me' : 'him') + (m.reading ? ' wide' : '')}>
             {tagFor && tagFor(m) && <span className="tag">{tagFor(m)}</span>}
             <div className="bubble">{m.role === 'user' ? m.content : <Words text={m.content} />}</div>
+            {m.saved && m.saved.length > 0 && (
+              <span className="savednote">❂ Elias placed {m.saved.map(t => `“${t}”`).join(', ')} in your Evidence Box</span>
+            )}
             <CopyButton text={m.content} />
           </div>
         ))}
@@ -517,6 +523,97 @@ function Reading({ apiKey, onAuthFail, go, month }) {
         </div>
       )}
       {err && <p className="err bar">{err}</p>}
+    </div>
+  )
+}
+
+// ---------- Evidence Box ----------
+const EMPTY_EV = { id: '', title: '', when: '', what: '' }
+const ADDED_BY = { elias: 'Placed here by Elias', sarah: 'Added by you', story: 'From your story' }
+
+function SpeakButton({ value, onText }) {
+  const mic = useDictation(value, onText)
+  if (!mic.supported) return null
+  return (
+    <button type="button" className={'speakbtn' + (mic.listening ? ' on' : '')} onClick={mic.toggle}>
+      {mic.listening ? '■ Stop — listening…' : '🎙 Speak it'}
+    </button>
+  )
+}
+
+function Evidence({ apiKey, onAuthFail }) {
+  const [items, setItems] = useState(null)
+  const [form, setForm] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const load = () => api('/api/evidence', apiKey)
+    .then(j => setItems(j.items))
+    .catch(e => e.status === 401 ? onAuthFail() : setMsg(e.message))
+  useEffect(() => { load() }, [])
+
+  const save = async () => {
+    setBusy(true); setMsg('')
+    try {
+      await api('/api/evidence', apiKey, { method: 'POST', body: JSON.stringify(form) })
+      setMsg(form.id ? 'Updated ❂' : 'Kept safe in your Evidence Box ❂')
+      setTimeout(() => setMsg(''), 2500)
+      setForm(null); load()
+    } catch (e) { if (e.status === 401) return onAuthFail(); setMsg(e.message) }
+    finally { setBusy(false) }
+  }
+  const remove = async id => {
+    if (!confirm('Remove this experience from your Evidence Box?')) return
+    try { await api('/api/evidence?id=' + encodeURIComponent(id), apiKey, { method: 'DELETE' }); load() }
+    catch (e) { setMsg(e.message) }
+  }
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  return (
+    <div className="page">
+      <Header title="Evidence Box" />
+      <div className="panel">
+        <p className="sub">Your spiritual experiences, kept safe. When you tell Elias about one, he places it here himself — and you can add your own too.</p>
+
+        {!form && <button className="primary" onClick={() => setForm(EMPTY_EV)}>+ Add an experience</button>}
+
+        {form && (
+          <div className="card evform">
+            <label className="field"><span>A name for it</span>
+              <input value={form.title} onChange={set('title')} placeholder="e.g. The moonlight through my window" />
+            </label>
+            <label className="field"><span>When did it happen?</span>
+              <input value={form.when} onChange={set('when')} placeholder="e.g. Last night, or summer 2025" />
+            </label>
+            <label className="field"><span>What happened — everything you remember</span>
+              <textarea rows={7} value={form.what} onChange={set('what')} placeholder="What you saw, heard or felt, and how it felt…" />
+            </label>
+            <SpeakButton value={form.what} onText={t => setForm(f => ({ ...f, what: t }))} />
+            <button className="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : form.id ? 'Save changes' : 'Keep this experience'}</button>
+            <button className="ghost" onClick={() => setForm(null)}>Cancel</button>
+          </div>
+        )}
+
+        {msg && <p className="sub center">{msg}</p>}
+        {!items && !msg && <p className="sub center">Gathering moonlight…</p>}
+        {items && items.length === 0 && <p className="sub center">Your Evidence Box is empty for now.</p>}
+
+        {items && items.map(x => (
+          <div key={x.id} className="card">
+            <div className="cardtop">
+              <span className="tag">{ADDED_BY[x.addedBy] || 'Added by you'}</span>
+              <span className="date">{x.when || niceDate(x.t)}</span>
+            </div>
+            <div className="cardtitle">❂ {x.title}</div>
+            {x.what && <div className="preview evwhat">{x.what}</div>}
+            <div className="rowactions">
+              <CopyButton text={`${x.title}${x.when ? `\n${x.when}` : ''}\n\n${x.what}`} />
+              <button className="copy-btn" onClick={() => { setForm({ id: x.id, title: x.title, when: x.when || '', what: x.what || '' }); window.scrollTo(0, 0); document.querySelector('.page')?.scrollTo({ top: 0, behavior: 'smooth' }) }}>Edit</button>
+              <button className="copy-btn" onClick={() => remove(x.id)}>Remove</button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
