@@ -1,4 +1,5 @@
 import { P, redis, authed, readBody, askModel, systemPrompt, loadEntries, journalContext } from './_lib.js'
+import { loadEvidence, evidenceContext, EVIDENCE_RULE, keepEvidence } from './_evidence.js'
 
 const KEEP = 300      // messages saved in Talk history
 const CONTEXT = 30    // recent messages Elias reads each time
@@ -23,14 +24,15 @@ export default async function handler(req, res) {
     const message = String(readBody(req).message || '').trim()
     if (!message) return res.status(400).json({ error: 'Empty message' })
 
-    const [history, entries] = await Promise.all([loadHistory(), loadEntries()])
-    const system = await systemPrompt([journalContext(entries)])
+    const [history, entries, evidence] = await Promise.all([loadHistory(), loadEntries(), loadEvidence()])
+    const system = await systemPrompt([journalContext(entries), evidenceContext(evidence), EVIDENCE_RULE])
     const recent = history.slice(-CONTEXT).map(m => ({ role: m.role, content: m.content }))
-    const reply = await askModel([{ role: 'system', content: system }, ...recent, { role: 'user', content: message }])
+    const answer = await askModel([{ role: 'system', content: system }, ...recent, { role: 'user', content: message }])
+    const { reply, saved } = await keepEvidence(answer)
 
     const now = Date.now()
     const userRow = { role: 'user', content: message, t: now }
-    const elRow = { role: 'assistant', content: reply, t: now + 1 }
+    const elRow = { role: 'assistant', content: reply, t: now + 1, ...(saved.length ? { saved } : {}) }
     await redis('RPUSH', P + 'history', JSON.stringify(userRow), JSON.stringify(elRow))
     await redis('LTRIM', P + 'history', -KEEP, -1)
 
