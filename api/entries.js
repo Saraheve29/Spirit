@@ -1,5 +1,6 @@
 // Saved dreams, spirit writing and signs — each with its own conversation with Elias.
 import { P, redis, authed, readBody, askModel, systemPrompt, loadEntries, journalContext, getJSON, setJSON, newId, TYPES, prettyDate, cut } from './_lib.js'
+import { loadEvidence, evidenceContext, EVIDENCE_RULE, keepEvidence } from './_evidence.js'
 
 export default async function handler(req, res) {
   if (!authed(req, res)) return
@@ -37,15 +38,18 @@ export default async function handler(req, res) {
       const message = String(body.message || '').trim()
       if (!message) return res.status(400).json({ error: 'Empty message' })
 
-      const entries = await loadEntries()
+      const [entries, evidence] = await Promise.all([loadEntries(), loadEvidence()])
       const system = await systemPrompt([
         `You are talking with Sarah about her ${TYPES[entry.type].label.toLowerCase()} from ${prettyDate(entry.t)}. Stay with it: answer her questions, go deeper into the symbols and messages, and respond to what she adds.`,
         journalContext(entries, { skipId: entry.id }),
+        evidenceContext(evidence),
+        EVIDENCE_RULE,
       ])
       const thread = (entry.thread || []).slice(-30).map(m => ({ role: m.role, content: m.content }))
-      const reply = await askModel([{ role: 'system', content: system }, ...thread, { role: 'user', content: message }])
+      const answer = await askModel([{ role: 'system', content: system }, ...thread, { role: 'user', content: message }])
+      const { reply, saved } = await keepEvidence(answer)
       const now = Date.now()
-      entry.thread = [...(entry.thread || []), { role: 'user', content: message, t: now }, { role: 'assistant', content: reply, t: now + 1 }]
+      entry.thread = [...(entry.thread || []), { role: 'user', content: message, t: now }, { role: 'assistant', content: reply, t: now + 1, ...(saved.length ? { saved } : {}) }]
       await setJSON(P + 'entry:' + entry.id, entry)
       return res.status(200).json({ entry })
     }
@@ -56,14 +60,15 @@ export default async function handler(req, res) {
     if (!TYPES[type]) return res.status(400).json({ error: 'Unknown type' })
     if (!text) return res.status(400).json({ error: 'Empty entry' })
 
-    const entries = await loadEntries()
-    const system = await systemPrompt([TYPES[type].prompt, journalContext(entries)])
-    const reply = await askModel([{ role: 'system', content: system }, { role: 'user', content: text }], { maxTokens: 1400 })
+    const [entries, evidence] = await Promise.all([loadEntries(), loadEvidence()])
+    const system = await systemPrompt([TYPES[type].prompt, journalContext(entries), evidenceContext(evidence), EVIDENCE_RULE])
+    const answer = await askModel([{ role: 'system', content: system }, { role: 'user', content: text }], { maxTokens: 1400 })
+    const { reply, saved } = await keepEvidence(answer)
 
     const now = Date.now()
     const entry = {
       id: newId(), type, text, t: now,
-      thread: [{ role: 'user', content: text, t: now }, { role: 'assistant', content: reply, t: now + 1 }],
+      thread: [{ role: 'user', content: text, t: now }, { role: 'assistant', content: reply, t: now + 1, ...(saved.length ? { saved } : {}) }],
     }
     await setJSON(P + 'entry:' + entry.id, entry)
     await redis('RPUSH', P + 'entries', entry.id)
