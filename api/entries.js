@@ -1,6 +1,7 @@
 // Saved dreams, spirit writing and signs — each with its own conversation with Elias.
 import { P, redis, authed, readBody, askModel, systemPrompt, loadEntries, journalContext, getJSON, setJSON, newId, TYPES, prettyDate, cut } from './_lib.js'
 import { loadEvidence, evidenceContext, EVIDENCE_RULE, keepEvidence } from './_evidence.js'
+import { STUDY_RULE, keepStudies } from './_study.js'
 
 export default async function handler(req, res) {
   if (!authed(req, res)) return
@@ -44,12 +45,15 @@ export default async function handler(req, res) {
         journalContext(entries, { skipId: entry.id }),
         evidenceContext(evidence),
         EVIDENCE_RULE,
+        STUDY_RULE,
       ])
       const thread = (entry.thread || []).slice(-30).map(m => ({ role: m.role, content: m.content }))
       const answer = await askModel([{ role: 'system', content: system }, ...thread, { role: 'user', content: message }])
-      const { reply, saved } = await keepEvidence(answer)
+      const kept = await keepEvidence(answer)
+      const { reply, studying } = await keepStudies(kept.reply)
+      const saved = kept.saved
       const now = Date.now()
-      entry.thread = [...(entry.thread || []), { role: 'user', content: message, t: now }, { role: 'assistant', content: reply, t: now + 1, ...(saved.length ? { saved } : {}) }]
+      entry.thread = [...(entry.thread || []), { role: 'user', content: message, t: now }, { role: 'assistant', content: reply, t: now + 1, ...(saved.length ? { saved } : {}), ...(studying.length ? { studying } : {}) }]
       await setJSON(P + 'entry:' + entry.id, entry)
       return res.status(200).json({ entry })
     }
