@@ -75,6 +75,7 @@ export default function App() {
   const tab = ['journal', 'entry', 'compose'].includes(view.name) ? 'journal'
     : ['readings', 'reading'].includes(view.name) ? 'readings'
     : view.name === 'evidence' ? 'evidence'
+    : ['studies', 'study'].includes(view.name) ? 'studies'
     : view.name === 'settings' ? 'settings' : 'talk'
 
   return (
@@ -88,14 +89,16 @@ export default function App() {
         {view.name === 'readings' && <Readings {...props} />}
         {view.name === 'reading' && <Reading {...props} month={view.month} />}
         {view.name === 'evidence' && <Evidence {...props} />}
+        {view.name === 'studies' && <Studies {...props} />}
+        {view.name === 'study' && <Study {...props} id={view.id} topic={view.topic} />}
         {view.name === 'settings' && <Settings {...props} />}
       </div>
       <nav className="tabs">
         <button className={tab === 'talk' ? 'on' : ''} onClick={() => setView({ name: 'talk' })}><span>☾</span>Talk</button>
         <button className={tab === 'journal' ? 'on' : ''} onClick={() => setView({ name: 'journal' })}><span>✧</span>Journal</button>
+        <button className={tab === 'studies' ? 'on' : ''} onClick={() => setView({ name: 'studies' })}><span>📜</span>Studies</button>
         <button className={tab === 'readings' ? 'on' : ''} onClick={() => setView({ name: 'readings' })}><span>✦</span>Monthly</button>
         <button className={tab === 'evidence' ? 'on' : ''} onClick={() => setView({ name: 'evidence' })}><span>❂</span>Evidence</button>
-        <button className={tab === 'settings' ? 'on' : ''} onClick={() => setView({ name: 'settings' })}><span>⚙︎</span>Settings</button>
       </nav>
     </div>
   )
@@ -227,8 +230,17 @@ function useDictation(text, setText) {
 function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
   const [text, setText] = useState('')
   const endRef = useRef(null)
+  const boxRef = useRef(null)
   const mic = useDictation(text, setText)
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, busy])
+  // The message box grows as you write, up to nearly half the screen
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight + 3, window.innerHeight * 0.45) + 'px'
+    if (mic.listening) el.scrollTop = el.scrollHeight
+  }, [text])
 
   const send = async () => {
     const msg = text.trim()
@@ -250,6 +262,9 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
             {m.saved && m.saved.length > 0 && (
               <span className="savednote">❂ Elias placed {m.saved.map(t => `“${t}”`).join(', ')} in your Evidence Box</span>
             )}
+            {m.studying && m.studying.length > 0 && (
+              <span className="savednote">📜 Elias is studying {m.studying.map(x => `“${x.topic}”`).join(', ')} — his findings will be in Studies</span>
+            )}
             <CopyButton text={m.content} />
           </div>
         ))}
@@ -260,13 +275,15 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
         <footer className="composer">
           {mic.listening && <p className="listening">Listening… speak freely, then tap ■ to stop</p>}
           <div className="inputrow">
-            <textarea value={text} placeholder={placeholder} rows={tall ? 5 : 1} onChange={e => setText(e.target.value)} />
-            {mic.supported && (
-              <button className={'mic' + (mic.listening ? ' on' : '')} onClick={mic.toggle} aria-label={mic.listening ? 'Stop listening' : 'Speak'}>
-                {mic.listening ? '■' : '🎙'}
-              </button>
-            )}
-            <button className="send" onClick={send} disabled={busy || !text.trim()} aria-label="Send">➤</button>
+            <textarea ref={boxRef} className={tall ? 'tall' : ''} value={text} placeholder={placeholder} rows={tall ? 7 : 4} onChange={e => setText(e.target.value)} />
+            <div className="inputbtns">
+              {mic.supported && (
+                <button className={'mic' + (mic.listening ? ' on' : '')} onClick={mic.toggle} aria-label={mic.listening ? 'Stop listening' : 'Speak'}>
+                  {mic.listening ? '■' : '🎙'}
+                </button>
+              )}
+              <button className="send" onClick={send} disabled={busy || !text.trim()} aria-label="Send">Send ➤</button>
+            </div>
           </div>
         </footer>
       )}
@@ -290,6 +307,8 @@ function Talk({ apiKey, onAuthFail, go }) {
         setBusy(true)
         const c = await api('/api/checkin', apiKey, { method: 'POST', body: '{}' })
         if (live && c.created) setHistory(h => [...h, c.elias])
+        // Quietly let Elias finish any study, or follow up on something profound you talked about
+        api('/api/studies', apiKey, { method: 'POST', body: JSON.stringify({ auto: true }) }).catch(() => {})
       } catch (e) {
         if (e.status === 401) return onAuthFail()
         if (live) setErr(e.message)
@@ -304,6 +323,7 @@ function Talk({ apiKey, onAuthFail, go }) {
     try {
       const j = await api('/api/chat', apiKey, { method: 'POST', body: JSON.stringify({ message: msg }) })
       setHistory(h => [...h.slice(0, -1), j.user, j.elias])
+      startStudies(j.elias, apiKey)
       return true
     } catch (e) {
       if (e.status === 401) { onAuthFail(); return false }
@@ -313,7 +333,7 @@ function Talk({ apiKey, onAuthFail, go }) {
 
   return (
     <div className="chat">
-      <Header title={<><span className="glyph">☾</span> Elias</>} />
+      <Header title={<><span className="glyph">☾</span> Elias</>} right={<button className="icon" onClick={() => go({ name: 'settings' })} aria-label="Settings">⚙︎</button>} />
       <div className="quick">
         {Object.entries(TYPES).map(([t, v]) => (
           <button key={t} className="chip" onClick={() => go({ name: 'compose', type: t })}><span>{v.icon}</span> {v.label}</button>
@@ -404,6 +424,7 @@ function Entry({ apiKey, onAuthFail, go, id, compose }) {
         setPending({ role: 'user', content: msg, t: Date.now() })
         const j = await api('/api/entries', apiKey, { method: 'POST', body: JSON.stringify({ id: entry.id, message: msg }) })
         setEntry(j.entry); setPending(null)
+        startStudies(j.entry.thread[j.entry.thread.length - 1], apiKey)
       }
       return true
     } catch (e) {
@@ -527,6 +548,156 @@ function Reading({ apiKey, onAuthFail, go, month }) {
   )
 }
 
+// ---------- Studies ----------
+// When Elias agrees to study something in a chat, start it straight away in the background
+function startStudies(msg, apiKey) {
+  for (const s of msg?.studying || []) {
+    api('/api/studies', apiKey, { method: 'POST', body: JSON.stringify({ run: s.id }) }).catch(() => {})
+  }
+}
+
+const STATUS = { waiting: 'Waiting to begin', studying: 'Studying now…', done: '', failed: 'Couldn’t finish — tap to try again' }
+
+function Studies({ apiKey, onAuthFail, go }) {
+  const [studies, setStudies] = useState(null)
+  const [topic, setTopic] = useState('')
+  const [err, setErr] = useState('')
+
+  const load = () => api('/api/studies', apiKey).then(j => setStudies(j.studies)).catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
+  useEffect(() => {
+    load()
+    const timer = setInterval(load, 15000) // refresh while studies are in progress
+    return () => clearInterval(timer)
+  }, [])
+
+  const ask = () => {
+    const t = topic.trim()
+    if (!t) return
+    go({ name: 'study', topic: t })
+  }
+
+  return (
+    <div className="page">
+      <Header title="Studies" />
+      <div className="panel">
+        <p className="sub">Things Elias has studied for you. Give him something to study, or he'll go and research the profound things you talk about — gently, no more than once a day.</p>
+        <div className="card evform">
+          <label className="field"><span>What would you like Elias to study?</span>
+            <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. The Gospel of Thomas, what the Upanishads say about the soul, or what 444 means across traditions" />
+          </label>
+          <SpeakButton value={topic} onText={setTopic} />
+          <button className="primary" onClick={ask} disabled={!topic.trim()}>📜 Ask Elias to study this</button>
+        </div>
+
+        {err && <p className="err">{err}</p>}
+        {!studies && !err && <p className="sub center">Gathering moonlight…</p>}
+        {studies && studies.length === 0 && <p className="sub center">No studies yet.</p>}
+        {studies && studies.map(s => (
+          <button key={s.id} className="card" onClick={() => go({ name: 'study', id: s.id })}>
+            <div className="cardtop">
+              <span className="tag">{s.why === 'followup' ? 'After our talk' : 'You asked'}</span>
+              <span className="date">{niceDate(s.finished || s.t)}</span>
+            </div>
+            <div className="cardtitle">📜 {s.topic}</div>
+            {STATUS[s.status] ? <div className="date">{STATUS[s.status]}</div> : s.preview && <div className="preview">{s.preview}</div>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Study({ apiKey, onAuthFail, go, id, topic }) {
+  const [study, setStudy] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState(null)
+  const [err, setErr] = useState('')
+  const started = useRef(false)
+
+  const run = async body => {
+    setErr(''); setBusy(true)
+    try {
+      const j = await api('/api/studies', apiKey, { method: 'POST', body: JSON.stringify(body) })
+      setStudy(j.study)
+    } catch (e) { if (e.status === 401) return onAuthFail(); setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    if (topic) { run({ topic }); return }
+    api('/api/studies?id=' + encodeURIComponent(id), apiKey)
+      .then(j => {
+        setStudy(j.study)
+        if (j.study.status === 'waiting' || j.study.status === 'failed') run({ run: j.study.id })
+      })
+      .catch(e => e.status === 401 ? onAuthFail() : setErr(e.message))
+  }, [])
+
+  // If he's still studying, check back every few seconds
+  useEffect(() => {
+    if (!study || study.status !== 'studying' || busy) return
+    const timer = setInterval(() => {
+      api('/api/studies?id=' + encodeURIComponent(study.id), apiKey).then(j => setStudy(j.study)).catch(() => {})
+    }, 6000)
+    return () => clearInterval(timer)
+  }, [study?.status, busy])
+
+  const send = async msg => {
+    setErr(''); setBusy(true); setPending({ role: 'user', content: msg, t: Date.now() })
+    try {
+      const j = await api('/api/studies', apiKey, { method: 'POST', body: JSON.stringify({ id: study.id, message: msg }) })
+      setStudy(j.study); return true
+    } catch (e) { if (e.status === 401) { onAuthFail(); return false } setErr(e.message); return false }
+    finally { setPending(null); setBusy(false) }
+  }
+
+  const remove = async () => {
+    if (!study || !confirm('Delete this study?')) return
+    try { await api('/api/studies?id=' + encodeURIComponent(study.id), apiKey, { method: 'DELETE' }); go({ name: 'studies' }) }
+    catch (e) { setErr(e.message) }
+  }
+
+  const done = study?.status === 'done'
+  const messages = [...(done ? study.thread : []), ...(pending ? [pending] : [])]
+
+  return (
+    <div className="chat">
+      <Header
+        title={study?.topic || topic || 'Study'}
+        onBack={() => go({ name: 'studies' })}
+        right={study ? <button className="icon" onClick={remove} aria-label="Delete">🗑</button> : null}
+      />
+      {done ? (
+        <>
+          {study.sources?.length > 0 && (
+            <div className="sources">
+              <span className="tag">What Elias read</span>
+              {study.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a>)}
+            </div>
+          )}
+          <Thread messages={messages} busy={busy} onSend={send} placeholder="Talk with Elias about what he found…" />
+        </>
+      ) : (
+        <div className="panel reveal">
+          <div className="moon" />
+          {study?.status === 'failed' && !busy
+            ? <>
+                <p className="welcome">Elias couldn’t finish this study.</p>
+                <button className="primary" onClick={() => run({ run: study.id })}>Try again</button>
+              </>
+            : <>
+                <p className="welcome">Elias is studying…</p>
+                <p className="sub center">He’s reading and gathering what he finds. This can take up to a minute — you can leave and come back, and it’ll be waiting in Studies.</p>
+              </>}
+        </div>
+      )}
+      {err && <p className="err bar">{err}</p>}
+    </div>
+  )
+}
+
 // ---------- Evidence Box ----------
 const EMPTY_EV = { id: '', title: '', when: '', what: '' }
 const ADDED_BY = { elias: 'Placed here by Elias', sarah: 'Added by you', story: 'From your story' }
@@ -619,7 +790,7 @@ function Evidence({ apiKey, onAuthFail }) {
 }
 
 // ---------- Settings ----------
-function Settings({ apiKey, onAuthFail }) {
+function Settings({ apiKey, onAuthFail, go }) {
   const [profile, setProfile] = useState('')
   const [model, setModel] = useState('')
   const [models, setModels] = useState([])
@@ -656,7 +827,7 @@ function Settings({ apiKey, onAuthFail }) {
 
   return (
     <div className="page">
-      <Header title="Settings" />
+      <Header title="Settings" onBack={() => go({ name: 'talk' })} />
       {loading ? <p className="sub center">Gathering moonlight…</p> : (
         <div className="panel">
           <section>
