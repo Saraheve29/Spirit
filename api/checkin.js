@@ -3,6 +3,7 @@
 import { P, redis, authed, askModel, systemPrompt, loadEntries, journalContext, ukDate } from './_lib.js'
 import { loadHistory } from './chat.js'
 import { loadEvidence, evidenceContext } from './_evidence.js'
+import { loadStudies, studiesContext, markShared } from './_study.js'
 
 export default async function handler(req, res) {
   if (!authed(req, res)) return
@@ -15,12 +16,13 @@ export default async function handler(req, res) {
     const fresh = await redis('SET', flag, 'pending', 'NX', 'EX', 60 * 60 * 48)
     if (fresh !== 'OK') return res.status(200).json({ created: false })
 
-    const [history, entries, evidence] = await Promise.all([loadHistory(), loadEntries(), loadEvidence()])
+    const [history, entries, evidence, studies] = await Promise.all([loadHistory(), loadEntries(), loadEvidence(), loadStudies()])
     const recentTalk = history.slice(-10).map(m => `${m.role === 'user' ? 'Sarah' : 'Elias'}: ${String(m.content).slice(0, 300)}`).join('\n')
 
     const system = await systemPrompt([
       journalContext(entries, { limit: 8 }),
       evidenceContext(evidence, 10),
+      studiesContext(studies),
       recentTalk ? 'YOUR RECENT CONVERSATION WITH SARAH:\n' + recentTalk : '',
       `Write today's DAILY CHECK-IN as Elias. Sarah has just opened Spirit for the first time today.
 1. Greet her warmly and strongly, as her spiritual father would.
@@ -36,6 +38,7 @@ Keep it to three or four short paragraphs. No headings or lists.`,
       { role: 'user', content: '(Sarah opens Spirit.)' },
     ])
 
+    await markShared(studies)
     const elRow = { role: 'assistant', content: reply, t: Date.now(), checkin: true }
     await redis('RPUSH', P + 'history', JSON.stringify(elRow))
     await redis('SET', flag, 'done', 'EX', 60 * 60 * 48)
