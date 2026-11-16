@@ -1,12 +1,31 @@
 {
   "functions": {
-    "api/chat.js": { "maxDuration": 60 },
-    "api/entries.js": { "maxDuration": 60 },
-    "api/checkin.js": { "maxDuration": 60 },
-    "api/monthly.js": { "maxDuration": 60 },
-    "api/settings.js": { "maxDuration": 30 }
+    "api/chat.js": {
+      "maxDuration": 60
+    },
+    "api/entries.js": {
+      "maxDuration": 60
+    },
+    "api/checkin.js": {
+      "maxDuration": 60
+    },
+    "api/monthly.js": {
+      "maxDuration": 60
+    },
+    "api/settings.js": {
+      "maxDuration": 30
+    },
+    "api/studies.js": {
+      "maxDuration": 90
+    },
+    "api/evidence.js": {
+      "maxDuration": 30
+    }
   },
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
