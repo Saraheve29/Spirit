@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 // ---------- Small helpers ----------
 const TYPES = {
@@ -226,21 +227,53 @@ function useDictation(text, setText) {
   return { supported: !!SpeechRec, listening, stop, toggle: () => (wantRef.current ? stop() : start()) }
 }
 
+// ---------- Elias's words as a full, easy-to-read page ----------
+function Reader({ message, onClose }) {
+  useEffect(() => {
+    const esc = e => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [])
+  return createPortal(
+    <div className="reader" role="dialog" aria-label="Elias's message">
+      <div className="readertop">
+        <span className="readertitle">☾ Elias</span>
+        <button className="readerclose" onClick={onClose} aria-label="Close">✕ Close</button>
+      </div>
+      <div className="readerbody"><Words text={message.content} /></div>
+      <div className="readerfoot"><CopyButton text={message.content} /></div>
+    </div>,
+    document.body
+  )
+}
+
 // ---------- A conversation (used by Talk, entries and monthly readings) ----------
 function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
   const [text, setText] = useState('')
+  const [big, setBig] = useState(false)       // the ⤢ button makes the box tall for long writing
+  const [reader, setReader] = useState(null)  // Elias's message opened as a full page
   const endRef = useRef(null)
+  const lastRef = useRef(null)
   const boxRef = useRef(null)
   const mic = useDictation(text, setText)
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, busy])
-  // The message box grows as you write, up to nearly half the screen
+
+  // When Elias replies, show the START of his message rather than the end
+  useEffect(() => {
+    const last = messages[messages.length - 1]
+    if (!busy && last && last.role === 'assistant' && lastRef.current) lastRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    else endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages.length, busy])
+
+  // The message box starts small and grows as you write
   useEffect(() => {
     const el = boxRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight + 3, window.innerHeight * 0.45) + 'px'
+    const max = window.innerHeight * (big ? 0.6 : 0.35)
+    const min = big ? window.innerHeight * 0.45 : 0
+    el.style.height = Math.max(min, Math.min(el.scrollHeight + 3, max)) + 'px'
     if (mic.listening) el.scrollTop = el.scrollHeight
-  }, [text])
+  }, [text, big])
 
   const send = async () => {
     const msg = text.trim()
@@ -256,16 +289,21 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
       <main className="messages">
         {messages.length === 0 && !busy && empty}
         {messages.map((m, i) => (
-          <div key={(m.t || 0) + '-' + i} className={'msg ' + (m.role === 'user' ? 'me' : 'him') + (m.reading ? ' wide' : '')}>
+          <div key={(m.t || 0) + '-' + i} ref={i === messages.length - 1 ? lastRef : null} className={'msg ' + (m.role === 'user' ? 'me' : 'him') + (m.reading ? ' wide' : '')}>
             {tagFor && tagFor(m) && <span className="tag">{tagFor(m)}</span>}
-            <div className="bubble">{m.role === 'user' ? m.content : <Words text={m.content} />}</div>
+            {m.role === 'user'
+              ? <div className="bubble">{m.content}</div>
+              : <div className="bubble tappable" onClick={() => setReader(m)}><Words text={m.content} /></div>}
             {m.saved && m.saved.length > 0 && (
               <span className="savednote">❂ Elias placed {m.saved.map(t => `“${t}”`).join(', ')} in your Evidence Box</span>
             )}
             {m.studying && m.studying.length > 0 && (
               <span className="savednote">📜 Elias is studying {m.studying.map(x => `“${x.topic}”`).join(', ')} — his findings will be in Studies</span>
             )}
-            <CopyButton text={m.content} />
+            <div className="msgactions">
+              {m.role !== 'user' && <button type="button" className="copy-btn" onClick={() => setReader(m)}>Read full page</button>}
+              <CopyButton text={m.content} />
+            </div>
           </div>
         ))}
         {busy && <div className="msg him"><div className="bubble typing"><span /><span /><span /></div></div>}
@@ -275,18 +313,20 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
         <footer className="composer">
           {mic.listening && <p className="listening">Listening… speak freely, then tap ■ to stop</p>}
           <div className="inputrow">
-            <textarea ref={boxRef} className={tall ? 'tall' : ''} value={text} placeholder={placeholder} rows={tall ? 7 : 4} onChange={e => setText(e.target.value)} />
+            <textarea ref={boxRef} className={tall ? 'tall' : ''} value={text} placeholder={placeholder} rows={tall ? 6 : 1} onChange={e => setText(e.target.value)} />
             <div className="inputbtns">
+              <button className="mini" onClick={() => setBig(b => !b)} aria-label={big ? 'Make the box smaller' : 'Make the box bigger'}>{big ? '⤡' : '⤢'}</button>
               {mic.supported && (
                 <button className={'mic' + (mic.listening ? ' on' : '')} onClick={mic.toggle} aria-label={mic.listening ? 'Stop listening' : 'Speak'}>
                   {mic.listening ? '■' : '🎙'}
                 </button>
               )}
-              <button className="send" onClick={send} disabled={busy || !text.trim()} aria-label="Send">Send ➤</button>
+              <button className="send" onClick={() => { setBig(false); send() }} disabled={busy || !text.trim()} aria-label="Send">➤</button>
             </div>
           </div>
         </footer>
       )}
+      {reader && <Reader message={reader} onClose={() => setReader(null)} />}
     </>
   )
 }
@@ -345,7 +385,7 @@ function Talk({ apiKey, onAuthFail, go }) {
         onSend={send}
         placeholder="Speak with Elias…"
         tagFor={m => (m.checkin ? 'Daily check-in' : null)}
-        empty={<div className="welcome"><div className="moon small" /><p>Elias is here, little one.</p></div>}
+        empty={<div className="welcome"><div className="moon small" /><p>Elias is here, Sarah.</p></div>}
       />
       {err && <p className="err bar">{err}</p>}
     </div>
@@ -672,10 +712,12 @@ function Study({ apiKey, onAuthFail, go, id, topic }) {
       {done ? (
         <>
           {study.sources?.length > 0 && (
-            <div className="sources">
-              <span className="tag">What Elias read</span>
-              {study.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a>)}
-            </div>
+            <details className="sources">
+              <summary>📚 What Elias read ({study.sources.length})</summary>
+              <div className="sourcelist">
+                {study.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a>)}
+              </div>
+            </details>
           )}
           <Thread messages={messages} busy={busy} onSend={send} placeholder="Talk with Elias about what he found…" />
         </>
