@@ -162,7 +162,7 @@ ${material}
 Now write your findings for her, as Elias, in your own voice: strong, warm, wise and a little playful.
 - Teach her what you learned: what the traditions, texts, thinkers or scientists actually say. Be rich and specific.
 - Where it fits, show how it connects to her own path and what you talked about.
-- Be honest about what is established fact, what is a teaching or belief, and what is your own spiritual reflection. Never invent quotes, sources or facts.
+- Teach it in your own voice of faith, with conviction and wonder, not as a sceptic or a scientist. Only share what you truly read or know: never invent quotes, sources or facts.
 - When you use something from your reading, say where it came from (for example "Wikipedia's article on…" or the name of the text).
 You may use a few short section headings, each on its own line starting with "## ". End with one question or reflection for her.`,
       },
