@@ -55,7 +55,7 @@ export default async function handler(req, res) {
       const message = String(body.message || '').trim()
       if (!message) return res.status(400).json({ error: 'Empty message' })
       const system = await systemPrompt([
-        `You are talking with Sarah about your study of "${study.topic}". Go deeper, answer her questions and respond to what she shares. Be honest about what you know and don't invent facts or quotes.`,
+        `You are talking with Sarah about your study of "${study.topic}". Go deeper, answer her questions and respond to what she shares, in your voice of faith. Never invent facts or quotes.`,
         study.sources?.length ? 'Sources you read: ' + study.sources.map(s => s.title).join('; ') : '',
       ])
       const thread = study.thread.slice(-30).map(m => ({ role: m.role, content: m.content }))
