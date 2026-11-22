@@ -164,9 +164,13 @@ Now write your findings for her, as Elias, in your own voice: strong, warm, wise
 - Where it fits, show how it connects to her own path and what you talked about.
 - Teach it in your own voice of faith, with conviction and wonder, not as a sceptic or a scientist. Only share what you truly read or know: never invent quotes, sources or facts.
 - When you use something from your reading, say where it came from (for example "Wikipedia's article on…" or the name of the text).
-You may use a few short section headings, each on its own line starting with "## ". End with one question or reflection for her.`,
+You may use a few short section headings, each on its own line starting with "## ".
+
+ALWAYS finish with a final section headed exactly:
+## My conclusion
+In it, wrap everything up: draw together ALL the sources you read and everything you've taught above into one clear, heartfelt conclusion — what it all means, the single most important truth you found, and what it means for Sarah and her path. Keep it to one or two short paragraphs so she can take it in at a glance. Then end with one question or reflection for her.`,
       },
-    ], { maxTokens: 2600, temperature: 0.8 })
+    ], { maxTokens: 3400, temperature: 0.8 })
 
     const sources = []
     for (const l of lookups) {
