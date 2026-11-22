@@ -210,3 +210,6 @@ input:focus, textarea:focus { border-color: var(--pink); box-shadow: 0 0 0 3px v
 .readerbody .wordshead { font-size: 22px; margin: 26px 0 10px; }
 .readerbody .wordshead:first-child { margin-top: 0; }
 .readerfoot { flex: none; padding: 10px 22px calc(env(safe-area-inset-bottom) + 12px); border-top: 1.5px solid var(--border); background: var(--card); }
+
+.conclude { flex: none; margin: 8px 14px 0; padding: 11px; border-radius: 999px; border: 1.5px solid var(--border); background: linear-gradient(180deg, #FFF6FA, var(--blush)); color: var(--deep-pink); font-weight: 700; font-size: 14.5px; }
+.conclude:disabled { opacity: 0.7; }
