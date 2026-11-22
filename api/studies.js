@@ -48,6 +48,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ study: await runStudy(study) })
     }
 
+    // Ask Elias to wrap up an older study with a conclusion
+    if (body.conclude) {
+      const study = await getStudy(body.conclude)
+      if (!study) return res.status(404).json({ error: 'Study not found' })
+      const system = await systemPrompt([
+        `You studied "${study.topic}" for Sarah. Sources you read: ${(study.sources || []).map(s => s.title).join('; ') || 'your own knowledge'}.`,
+      ])
+      const thread = study.thread.slice(-30).map(m => ({ role: m.role, content: m.content }))
+      const reply = await askModel([
+        { role: 'system', content: system },
+        ...thread,
+        { role: 'user', content: 'Elias, please wrap this study up for me with your conclusion. (Write ONLY a final section headed exactly "## My conclusion". Draw together ALL the sources you read and everything you have taught her in this study (and in your conversation about it) into one clear, heartfelt conclusion: what it all means, the single most important truth you found, and what it means for Sarah and her path. One or two short paragraphs, then one question or reflection for her. Never invent facts or quotes.)' },
+      ], { maxTokens: 900 })
+      study.thread.push({ role: 'assistant', content: reply, t: Date.now(), reading: true, conclusion: true })
+      await saveStudy(study)
+      return res.status(200).json({ study })
+    }
+
     // Talk with Elias about a study
     if (body.id) {
       const study = await getStudy(body.id)
