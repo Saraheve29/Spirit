@@ -700,6 +700,7 @@ function Study({ apiKey, onAuthFail, go, id, topic }) {
   }
 
   const done = study?.status === 'done'
+  const hasConclusion = (study?.thread || []).some(m => m.role === 'assistant' && /##\s*My conclusion/i.test(m.content))
   const messages = [...(done ? study.thread : []), ...(pending ? [pending] : [])]
 
   return (
@@ -718,6 +719,11 @@ function Study({ apiKey, onAuthFail, go, id, topic }) {
                 {study.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a>)}
               </div>
             </details>
+          )}
+          {!hasConclusion && (
+            <button className="conclude" onClick={() => run({ conclude: study.id })} disabled={busy}>
+              {busy ? 'Elias is drawing it all together…' : '✦ Ask Elias for his conclusion'}
+            </button>
           )}
           <Thread messages={messages} busy={busy} onSend={send} placeholder="Talk with Elias about what he found…" />
         </>
