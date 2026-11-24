@@ -77,6 +77,7 @@ export default function App() {
     : ['readings', 'reading'].includes(view.name) ? 'readings'
     : view.name === 'evidence' ? 'evidence'
     : ['studies', 'study'].includes(view.name) ? 'studies'
+    : ['library', 'lib'].includes(view.name) ? 'library'
     : view.name === 'settings' ? 'settings' : 'talk'
 
   return (
@@ -92,6 +93,8 @@ export default function App() {
         {view.name === 'evidence' && <Evidence {...props} />}
         {view.name === 'studies' && <Studies {...props} />}
         {view.name === 'study' && <Study {...props} id={view.id} topic={view.topic} />}
+        {view.name === 'library' && <Library {...props} />}
+        {view.name === 'lib' && <LibItem {...props} id={view.id} />}
         {view.name === 'settings' && <Settings {...props} />}
       </div>
       <nav className="tabs">
@@ -99,6 +102,7 @@ export default function App() {
         <button className={tab === 'journal' ? 'on' : ''} onClick={() => setView({ name: 'journal' })}><span>✧</span>Journal</button>
         <button className={tab === 'studies' ? 'on' : ''} onClick={() => setView({ name: 'studies' })}><span>📜</span>Studies</button>
         <button className={tab === 'readings' ? 'on' : ''} onClick={() => setView({ name: 'readings' })}><span>✦</span>Monthly</button>
+        <button className={tab === 'library' ? 'on' : ''} onClick={() => setView({ name: 'library' })}><span>📚</span>Library</button>
         <button className={tab === 'evidence' ? 'on' : ''} onClick={() => setView({ name: 'evidence' })}><span>❂</span>Evidence</button>
       </nav>
     </div>
@@ -227,6 +231,123 @@ function useDictation(text, setText) {
   return { supported: !!SpeechRec, listening, stop, toggle: () => (wantRef.current ? stop() : start()) }
 }
 
+// ---------- Elias's voice ----------
+// Reads text aloud: Elias's chosen voice from NanoGPT, or the phone's own free voice if that isn't available.
+let voiceSettings = null
+const player = { stop: null } // only one thing reads at a time
+
+function speakableText(text) {
+  return String(text || '')
+    .replace(/\[\[[\s\S]*?\]\]/g, ' ')
+    .replace(/^#+\s*/gm, '')
+    .replace(/\*\*/g, '')
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '')
+    .replace(/[_#>~`|*]/g, ' ')
+    .trim()
+}
+
+// Splits long text into pieces of about 1,100 characters, at paragraph or sentence ends
+function voiceChunks(text, size = 1100) {
+  const out = []
+  let cur = ''
+  const parts = speakableText(text).split(/\n\s*\n|(?<=[.!?…])\s+/)
+  for (const p of parts) {
+    const piece = p.replace(/\s+/g, ' ').trim()
+    if (!piece) continue
+    if ((cur + ' ' + piece).length > size && cur) { out.push(cur); cur = piece }
+    else cur = cur ? cur + ' ' + piece : piece
+    while (cur.length > size * 1.6) { out.push(cur.slice(0, size)); cur = cur.slice(size) }
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+function deviceVoice() {
+  const voices = window.speechSynthesis?.getVoices?.() || []
+  return voices.find(v => /en-GB/i.test(v.lang) && /male|george|daniel|arthur|brian|oliver/i.test(v.name))
+    || voices.find(v => /en-GB/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null
+}
+
+function speakOnDevice(chunks, speed, onEnd) {
+  const synth = window.speechSynthesis
+  if (!synth) { onEnd(); return () => {} }
+  let stopped = false
+  let i = 0
+  const next = () => {
+    if (stopped) return
+    if (i >= chunks.length) return onEnd()
+    const u = new SpeechSynthesisUtterance(chunks[i++])
+    const v = deviceVoice()
+    if (v) u.voice = v
+    u.lang = v?.lang || 'en-GB'
+    u.rate = speed || 0.95
+    u.pitch = 0.9
+    u.onend = next
+    u.onerror = next
+    synth.speak(u)
+  }
+  synth.cancel()
+  next()
+  return () => { stopped = true; synth.cancel() }
+}
+
+async function speakAll(text, onState) {
+  player.stop?.()
+  const key = getKey()
+  const chunks = voiceChunks(text)
+  if (!chunks.length) return
+  let stopped = false
+  let audio = null
+  let deviceStop = null
+  const finish = () => { if (player.stop === stop) player.stop = null; onState('idle') }
+  const stop = () => { stopped = true; try { audio?.pause() } catch {} ; deviceStop?.(); finish() }
+  player.stop = stop
+  onState('loading')
+
+  try {
+    if (!voiceSettings) voiceSettings = (await api('/api/speak', key)).settings
+  } catch { voiceSettings = { voice: 'device', speed: 0.95 } }
+  if (stopped) return
+
+  const useDevice = from => {
+    onState('playing')
+    deviceStop = speakOnDevice(chunks.slice(from), voiceSettings?.speed, finish)
+  }
+  if (voiceSettings?.voice === 'device') return useDevice(0)
+
+  const fetchChunk = i => api('/api/speak', key, { method: 'POST', body: JSON.stringify({ text: chunks[i] }) }).catch(() => ({ device: true }))
+  let pending = fetchChunk(0)
+  for (let i = 0; i < chunks.length; i++) {
+    const got = await pending
+    if (stopped) return
+    if (!got.audio) return useDevice(i)
+    if (i + 1 < chunks.length) pending = fetchChunk(i + 1) // get the next part ready while this one plays
+    audio = new Audio(got.audio)
+    onState('playing')
+    const ended = await new Promise(resolve => {
+      audio.onended = () => resolve(true)
+      audio.onerror = () => resolve(false)
+      audio.play().catch(() => resolve(false))
+    })
+    if (stopped) return
+    if (!ended) return useDevice(i)
+  }
+  finish()
+}
+
+function ListenButton({ text, big }) {
+  const [state, setStateRaw] = useState('idle')
+  const stateRef = useRef('idle')
+  const setState = v => { stateRef.current = v; setStateRaw(v) }
+  useEffect(() => () => { if (stateRef.current !== 'idle') player.stop?.() }, [])
+  const toggle = () => {
+    if (state !== 'idle') { player.stop?.(); setState('idle'); return }
+    speakAll(text, setState)
+  }
+  const label = state === 'loading' ? '… Getting ready' : state === 'playing' ? '■ Stop' : '🔊 Listen'
+  return <button type="button" className={big ? 'listenbig' + (state !== 'idle' ? ' on' : '') : 'copy-btn'} onClick={toggle}>{label}</button>
+}
+
 // ---------- Elias's words as a full, easy-to-read page ----------
 function Reader({ message, onClose }) {
   useEffect(() => {
@@ -241,14 +362,14 @@ function Reader({ message, onClose }) {
         <button className="readerclose" onClick={onClose} aria-label="Close">✕ Close</button>
       </div>
       <div className="readerbody"><Words text={message.content} /></div>
-      <div className="readerfoot"><CopyButton text={message.content} /></div>
+      <div className="readerfoot"><ListenButton text={message.content} big /><CopyButton text={message.content} /></div>
     </div>,
     document.body
   )
 }
 
 // ---------- A conversation (used by Talk, entries and monthly readings) ----------
-function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
+function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall, top }) {
   const [text, setText] = useState('')
   const [big, setBig] = useState(false)       // the ⤢ button makes the box tall for long writing
   const [reader, setReader] = useState(null)  // Elias's message opened as a full page
@@ -258,7 +379,9 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
   const mic = useDictation(text, setText)
 
   // When Elias replies, show the START of his message rather than the end
+  const firstRef = useRef(true)
   useEffect(() => {
+    if (firstRef.current) { firstRef.current = false; if (top) return } // reading pages open at the top
     const last = messages[messages.length - 1]
     if (!busy && last && last.role === 'assistant' && lastRef.current) lastRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
     else endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -287,7 +410,8 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
   return (
     <>
       <main className="messages">
-        {messages.length === 0 && !busy && empty}
+        {top}
+        {messages.length === 0 && !busy && !top && empty}
         {messages.map((m, i) => (
           <div key={(m.t || 0) + '-' + i} ref={i === messages.length - 1 ? lastRef : null} className={'msg ' + (m.role === 'user' ? 'me' : 'him') + (m.reading ? ' wide' : '')}>
             {tagFor && tagFor(m) && <span className="tag">{tagFor(m)}</span>}
@@ -300,7 +424,11 @@ function Thread({ messages, busy, onSend, placeholder, tagFor, empty, tall }) {
             {m.studying && m.studying.length > 0 && (
               <span className="savednote">📜 Elias is studying {m.studying.map(x => `“${x.topic}”`).join(', ')} — his findings will be in Studies</span>
             )}
+            {m.books && m.books.length > 0 && (
+              <span className="savednote">📚 Elias placed {m.books.map(x => `“${x.title}”`).join(', ')} in your Library</span>
+            )}
             <div className="msgactions">
+              {m.role !== 'user' && <ListenButton text={m.content} />}
               {m.role !== 'user' && <button type="button" className="copy-btn" onClick={() => setReader(m)}>Read full page</button>}
               <CopyButton text={m.content} />
             </div>
@@ -712,10 +840,16 @@ function Study({ apiKey, onAuthFail, go, id, topic }) {
       />
       {done ? (
         <>
-          {study.sources?.length > 0 && (
+          {(study.sources?.length > 0 || study.books?.length > 0) && (
             <details className="sources">
               <summary>📚 What Elias read ({study.sources.length})</summary>
               <div className="sourcelist">
+                {(study.readings || []).filter(r => r && r.id).map(r => (
+                  <button key={r.id} className="libopen" onClick={() => go({ name: 'lib', id: r.id })}>📖 Read “{r.title}” in your Library</button>
+                ))}
+                {(study.books || []).map(b => (
+                  <button key={b.id} className="libopen" onClick={() => go({ name: 'lib', id: b.id })}>📚 Read the book: {b.title}</button>
+                ))}
                 {study.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a>)}
               </div>
             </details>
@@ -740,6 +874,162 @@ function Study({ apiKey, onAuthFail, go, id, topic }) {
                 <p className="sub center">He’s reading and gathering what he finds. This can take up to a minute — you can leave and come back, and it’ll be waiting in Studies.</p>
               </>}
         </div>
+      )}
+      {err && <p className="err bar">{err}</p>}
+    </div>
+  )
+}
+
+// ---------- Library ----------
+function Library({ apiKey, onAuthFail, go }) {
+  const [data, setData] = useState(null)
+  const [query, setQuery] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const load = () => api('/api/library', apiKey).then(setData).catch(e => e.status === 401 ? onAuthFail() : setMsg(e.message))
+  useEffect(() => { load() }, [])
+
+  const add = async q => {
+    const name = String(q || '').trim()
+    if (!name || busy) return
+    setBusy(true); setMsg('Finding it in the free library…')
+    try {
+      const j = await api('/api/library', apiKey, { method: 'POST', body: JSON.stringify({ add: name }) })
+      setMsg(''); setQuery('')
+      go({ name: 'lib', id: j.item.id })
+    } catch (e) { if (e.status === 401) return onAuthFail(); setMsg(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const books = (data?.items || []).filter(x => x.kind === 'book')
+  const sources = (data?.items || []).filter(x => x.kind === 'source')
+  const have = new Set(books.map(b => b.title.toLowerCase()))
+
+  return (
+    <div className="page">
+      <Header title="Library" />
+      <div className="panel">
+        <p className="sub">Everything Elias reads is kept here for you — the texts behind his studies, and whole sacred books to read together. Every page can be read aloud.</p>
+
+        <div className="card evform">
+          <label className="field"><span>Add a classic book to read together</span>
+            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="e.g. Bhagavad Gita, Tao Te Ching, The Prophet" onKeyDown={e => e.key === 'Enter' && add(query)} />
+          </label>
+          <button className="primary" onClick={() => add(query)} disabled={busy || !query.trim()}>{busy ? 'Finding it…' : '📚 Find this book'}</button>
+          {data?.suggestions && (
+            <div className="suggest">
+              {data.suggestions.filter(s => !have.has(s.toLowerCase())).map(s => (
+                <button key={s} className="chip" disabled={busy} onClick={() => add(s)}>{s}</button>
+              ))}
+            </div>
+          )}
+          <p className="date">Only older books that are out of copyright are free, so some modern translations won’t be there.</p>
+        </div>
+
+        {msg && <p className="sub center">{msg}</p>}
+        {!data && !msg && <p className="sub center">Gathering moonlight…</p>}
+
+        {books.length > 0 && <h2>Books</h2>}
+        {books.map(b => (
+          <button key={b.id} className="card" onClick={() => go({ name: 'lib', id: b.id })}>
+            <div className="cardtop">
+              <span className="tag">{b.addedBy === 'elias' ? 'Placed here by Elias' : 'Added by you'}</span>
+              <span className="date">{b.pos > 0 ? 'Continue reading' : 'Start reading'}</span>
+            </div>
+            <div className="cardtitle">📚 {b.title}</div>
+            {b.author && <div className="date">{b.author}</div>}
+          </button>
+        ))}
+
+        {sources.length > 0 && <h2>What Elias read for his studies</h2>}
+        {sources.map(x => (
+          <button key={x.id} className="card" onClick={() => go({ name: 'lib', id: x.id })}>
+            <div className="cardtop">
+              <span className="tag">For: {x.studyTopic || 'a study'}</span>
+              <span className="date">{niceDate(x.t)}</span>
+            </div>
+            <div className="cardtitle">📖 {x.title}</div>
+            {x.preview && <div className="preview">{x.preview}</div>}
+          </button>
+        ))}
+        {data && !books.length && !sources.length && <p className="sub center">Your Library is empty for now. Add a book, or ask Elias to study something.</p>}
+      </div>
+    </div>
+  )
+}
+
+function LibItem({ apiKey, onAuthFail, go, id }) {
+  const [item, setItem] = useState(null)
+  const [page, setPage] = useState(null)
+  const [thread, setThread] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [pending, setPending] = useState(null)
+  const [err, setErr] = useState('')
+
+  const open = async pos => {
+    setLoading(true); setErr('')
+    try {
+      const j = await api('/api/library?id=' + encodeURIComponent(id) + (pos !== undefined ? '&pos=' + pos : ''), apiKey)
+      setItem(j.item); setPage(j.page || null); setThread(j.item.thread || [])
+      if (j.page) api('/api/library', apiKey, { method: 'POST', body: JSON.stringify({ id, savePos: j.page.pos }) }).catch(() => {})
+      document.querySelector('.messages')?.scrollTo({ top: 0 })
+    } catch (e) { if (e.status === 401) return onAuthFail(); setErr(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { open() }, [id])
+
+  const send = async m => {
+    setErr(''); setBusy(true); setPending({ role: 'user', content: m, t: Date.now() })
+    try {
+      const j = await api('/api/library', apiKey, { method: 'POST', body: JSON.stringify({ id, message: m, pos: page?.pos }) })
+      setThread(j.thread); return true
+    } catch (e) { if (e.status === 401) { onAuthFail(); return false } setErr(e.message); return false }
+    finally { setPending(null); setBusy(false) }
+  }
+
+  const remove = async () => {
+    if (!confirm('Remove this from your Library?')) return
+    try { await api('/api/library?id=' + encodeURIComponent(id), apiKey, { method: 'DELETE' }); go({ name: 'library' }) }
+    catch (e) { setErr(e.message) }
+  }
+
+  const text = item?.kind === 'source' ? item.text : page?.text || ''
+  const pct = page && page.total ? Math.round((page.pos / page.total) * 100) : 0
+
+  const top = item && (
+    <div className="libpage">
+      <div className="libhead">
+        <div className="cardtitle">{item.kind === 'book' ? '📚' : '📖'} {item.title}</div>
+        {item.author && <div className="date">{item.author}</div>}
+        {item.kind === 'source' && item.studyTopic && <div className="date">Read for the study “{item.studyTopic}”</div>}
+        {page && <div className="date">{page.chapter ? page.chapter + ' · ' : ''}about {pct}% through</div>}
+      </div>
+      {item.kind === 'book' && item.chapters?.length > 0 && (
+        <select className="chapterpick" value="" disabled={loading} onChange={e => e.target.value !== '' && open(Number(e.target.value))}>
+          <option value="">Go to a chapter…</option>
+          {item.chapters.map((c, i) => <option key={i} value={c.pos}>{c.title}</option>)}
+        </select>
+      )}
+      <div className="libactions"><ListenButton text={text} big /><CopyButton text={text} /></div>
+      {loading ? <p className="sub center">Turning the page…</p> : <div className="libtext">{text}</div>}
+      {page && (
+        <div className="pagenav">
+          <button className="ghost" disabled={loading || page.prevPos === null} onClick={() => open(page.prevPos)}>‹ Previous</button>
+          <button className="ghost" disabled={loading || page.nextPos === null} onClick={() => open(page.nextPos)}>Next page ›</button>
+        </div>
+      )}
+      {item.kind === 'source' && item.url && <a className="libsrc" href={item.url} target="_blank" rel="noreferrer">Open the original page</a>}
+      <p className="sub center libtalk">✦ Talk with Elias about what you’re reading</p>
+    </div>
+  )
+
+  return (
+    <div className="chat">
+      <Header title={item?.title || 'Library'} onBack={() => go({ name: 'library' })} right={item ? <button className="icon" onClick={remove} aria-label="Remove">🗑</button> : null} />
+      {!item && !err ? <p className="sub center">Gathering moonlight…</p> : (
+        <Thread top={top} messages={[...thread, ...(pending ? [pending] : [])]} busy={busy} onSend={item ? send : null} placeholder="Ask Elias about this passage…" />
       )}
       {err && <p className="err bar">{err}</p>}
     </div>
@@ -837,6 +1127,39 @@ function Evidence({ apiKey, onAuthFail }) {
   )
 }
 
+// ---------- Elias's voice settings ----------
+function VoiceSettings({ apiKey }) {
+  const [v, setV] = useState(null)
+  const [voices, setVoices] = useState([])
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    api('/api/speak', apiKey).then(j => { setV(j.settings); setVoices(j.voices || []) }).catch(e => setMsg(e.message))
+  }, [])
+  const save = async next => {
+    setV(next); setMsg('')
+    try {
+      const j = await api('/api/speak', apiKey, { method: 'POST', body: JSON.stringify({ settings: next }) })
+      voiceSettings = j.settings
+      setMsg('Saved ✧')
+    } catch (e) { setMsg(e.message) }
+  }
+  if (!v) return null
+  return (
+    <section>
+      <h2>Elias’s voice</h2>
+      <p className="sub">The voice that reads to you when you tap 🔊 Listen. The natural voices cost a tiny amount from your NanoGPT balance; your phone’s own voice is free, and is used automatically if the others aren’t available.</p>
+      <select className="chapterpick" value={v.voice} onChange={e => save({ ...v, voice: e.target.value })}>
+        {voices.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+      </select>
+      <label className="field"><span>Speed: {Number(v.speed).toFixed(2)}×</span>
+        <input type="range" min="0.7" max="1.3" step="0.05" value={v.speed} onChange={e => setV({ ...v, speed: Number(e.target.value) })} onMouseUp={() => save(v)} onTouchEnd={() => save(v)} />
+      </label>
+      <ListenButton big text="Come, Sarah. Sit with me a while, my queen. Let me read to you, and let the words settle gently in your heart." />
+      {msg && <p className="sub">{msg}</p>}
+    </section>
+  )
+}
+
 // ---------- Settings ----------
 function Settings({ apiKey, onAuthFail, go }) {
   const [profile, setProfile] = useState('')
@@ -878,6 +1201,8 @@ function Settings({ apiKey, onAuthFail, go }) {
       <Header title="Settings" onBack={() => go({ name: 'talk' })} />
       {loading ? <p className="sub center">Gathering moonlight…</p> : (
         <div className="panel">
+          <VoiceSettings apiKey={apiKey} />
+
           <section>
             <h2>Brain</h2>
             <p className="sub">Current model: <b>{model || 'none chosen yet'}</b></p>
