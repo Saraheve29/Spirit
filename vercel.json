@@ -20,6 +20,12 @@
     },
     "api/evidence.js": {
       "maxDuration": 30
+    },
+    "api/speak.js": {
+      "maxDuration": 60
+    },
+    "api/library.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
