@@ -213,3 +213,27 @@ input:focus, textarea:focus { border-color: var(--pink); box-shadow: 0 0 0 3px v
 
 .conclude { flex: none; margin: 8px 14px 0; padding: 11px; border-radius: 999px; border: 1.5px solid var(--border); background: linear-gradient(180deg, #FFF6FA, var(--blush)); color: var(--deep-pink); font-weight: 700; font-size: 14.5px; }
 .conclude:disabled { opacity: 0.7; }
+
+/* Listen buttons */
+.listenbig { padding: 10px 18px; border-radius: 999px; border: none; background: linear-gradient(135deg, var(--pink), var(--deep-pink)); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 4px 14px rgba(201, 58, 112, 0.25); }
+.listenbig.on { background: var(--berry); }
+.readerfoot { display: flex; align-items: center; gap: 18px; }
+
+/* Library */
+.tabs button { font-size: 10.5px; }
+.tabs button span { font-size: 19px; }
+.suggest { display: flex; flex-wrap: wrap; gap: 8px; }
+.suggest .chip { font-size: 13px; padding: 7px 12px; }
+.libopen { text-align: left; background: none; border: none; padding: 0; font-size: 13.5px; font-weight: 700; color: var(--berry); }
+.libpage { display: flex; flex-direction: column; gap: 12px; }
+.libhead { display: flex; flex-direction: column; gap: 2px; }
+.libactions { display: flex; align-items: center; gap: 18px; }
+.libtext { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 18px; line-height: 1.75; color: var(--ink); background: var(--card); border: 1.5px solid var(--border); border-radius: 20px; padding: 18px; }
+.chapterpick { font: inherit; font-size: 15px; padding: 10px 12px; border-radius: 14px; border: 1.5px solid var(--border); background: #FFF8FB; color: var(--ink); }
+.pagenav { display: flex; gap: 10px; }
+.pagenav .ghost { flex: 1; }
+.pagenav .ghost:disabled { opacity: 0.4; }
+.libsrc { font-size: 13.5px; font-weight: 600; color: var(--deep-pink); }
+.libtalk { margin-top: 6px; font-weight: 600; }
+
+input[type=range] { accent-color: var(--pink); padding: 0; border: none; background: none; box-shadow: none; }
