@@ -2,6 +2,7 @@
 // and only when something deep came up), and anything you ask him to study.
 // Sources: Wikipedia (free) and a small number of web searches through NanoGPT (about half a penny each).
 import { P, redis, getJSON, setJSON, newId, askModel, systemPrompt, cut, prettyDate } from './_lib.js'
+import { saveStudySources, keepBooks, LIBRARY_RULE } from './_library.js'
 
 const UA = 'SpiritGuideApp/1.0 (https://github.com/Saraheve29/spirit; personal non-commercial app)'
 const WIKI_HEADERS = { 'User-Agent': UA, 'Api-User-Agent': UA, Accept: 'application/json' }
@@ -150,8 +151,8 @@ export async function runStudy(study) {
       : '(You could not find any written sources this time, so draw only on what you already know well, and say so.)'
 
     // 2) Write up what he found, for Sarah
-    const result = await askModel([
-      { role: 'system', content: base },
+    const written = await askModel([
+      { role: 'system', content: await systemPrompt([LIBRARY_RULE]) },
       {
         role: 'user',
         content: `You went away and studied "${study.topic}" for Sarah${study.why === 'followup' ? ', because it came up when the two of you were talking and it deserved deeper study' : ', because she asked you to'}.${context}
@@ -171,6 +172,7 @@ ALWAYS finish with a final section headed exactly:
 In it, wrap everything up: draw together ALL the sources you read and everything you've taught above into one clear, heartfelt conclusion — what it all means, the single most important truth you found, and what it means for Sarah and her path. Keep it to one or two short paragraphs so she can take it in at a glance. Then end with one question or reflection for her.`,
       },
     ], { maxTokens: 3400, temperature: 0.8 })
+    const { reply: result, books } = await keepBooks(written)
 
     const sources = []
     for (const l of lookups) {
@@ -179,6 +181,9 @@ In it, wrap everything up: draw together ALL the sources you read and everything
     }
     const seen = new Set()
     study.sources = sources.filter(s => s.url && !seen.has(s.url) && seen.add(s.url)).slice(0, 6)
+    // Keep everything he read in her Library, so she can read it too
+    try { study.readings = await saveStudySources(study, lookups) } catch { study.readings = [] }
+    study.books = books
     study.status = 'done'
     study.finished = Date.now()
     study.thread = [{ role: 'assistant', content: result, t: study.finished, reading: true }]
